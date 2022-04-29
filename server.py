@@ -2,6 +2,7 @@
 
 from concurrent import futures
 import logging
+from operator import contains
 from textwrap import fill
 
 import grpc
@@ -12,36 +13,79 @@ import uggly_pb2_grpc
 import csv
 
 
-def genTable(preq: uggly.PageRequest) -> uggly.PageResponse:
-    maxHeight = preq.client_height - 4
+class TableData():
+    def __init__(self,filename):
+        # set up a registry of column widths
+        self.Col_widths = {}
+        self.Data = list()
+        # load all data into class
+        with open(filename) as csv_file:
+            csv_reader = csv.reader(csv_file, delimiter=',')
+            # first go through and identify lengths for all cells
+            for i, row in enumerate(csv_reader):
+                self.Data.append(row)
+                for i, col in enumerate(row):
+                    if self.Col_widths.get(i) is None:
+                        self.Col_widths[i] = set()
+                    self.Col_widths[i].add(len(col))
+            # generate col length max for every column
+            # so our views are consistent
+            for col, lengths in self.Col_widths.items():
+                self.Col_widths[col] = max(lengths)
+
+def genTableView(preq: uggly.PageRequest, td: TableData) -> uggly.PageResponse:
+    # build our view frame based on page request name and
+    # cookies set from any previous views
+    start = 0
+    end = preq.client_height - 4
+    start_next = 0
+    start_previous = 0
+    end_next = 0
+    end_previous = 0
+    for cookie in preq.send_cookies:
+        if cookie.key=="start_previous":
+            start_previous = int(cookie.value)
+        if cookie.key=="start_next":
+            start_next = int(cookie.value)
+        if cookie.key=="end_next":
+            end_next = int(cookie.value)
+        if cookie.key=="end_previous":
+            end_previous = int(cookie.value)
+    if "next" in preq.name:
+        start = start_next
+        end = end_next
+    if "previous" in preq.name:
+        start = start_previous
+        end = end_previous
+    if start < 0:
+        start = 0
+        end = preq.client_height - 4
+    if end > len(td.Data):
+        end = len(td.Data)
+        start = end - preq.client_height -4
+
+    # now populate our view with data
     presp = uggly.PageResponse()
-    cols = {
-        0: list(),
-    }
-    col_widths = {
-        0: 0,
-    }
-    data = list()
-    with open('data.csv') as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter=',')
-        # first go through and identify lengths for all cells
-        for i, row in enumerate(csv_reader):
-            if i >= maxHeight:
-                break
-            data.append(row)
-            for i, col in enumerate(row):
-                if cols.get(i) is None:
-                    cols[i] = list()
-                cols[i].append(len(col))
-        # generate col length max for every column
-        for col, lengths in cols.items():
-            col_widths[col] = max(lengths)
-        # now actually generate the rows from the saved data
-        for line_count, row in enumerate(data):
-            if line_count == 0:
-                presp = genTableRow(presp, col_widths, True, line_count, *row)
-            else:
-                presp = genTableRow(presp, col_widths, False, line_count, *row)
+    presp = genTableRow(presp, td.Col_widths, True, 0, *td.Data[0])
+    displayRow = 1
+    for i in range(start+1,end):
+        row = td.Data[i]
+        presp = genTableRow(presp, td.Col_widths, False, displayRow, *row)
+        displayRow+=1
+    presp.set_cookies.append(uggly.Cookie(key="start_previous",value=str(start-displayRow)))
+    presp.set_cookies.append(uggly.Cookie(key="end_previous",value=str(start)))
+    presp.set_cookies.append(uggly.Cookie(key="start_next",value=str(end)))
+    presp.set_cookies.append(uggly.Cookie(key="end_next",value=str(end+preq.client_height-4)))
+    presp.key_strokes.append(uggly.KeyStroke(
+        key_stroke="n",
+        link=uggly.Link(
+            key_stroke="n",
+            page_name="csv_next")))
+    presp.key_strokes.append(uggly.KeyStroke(
+        key_stroke="p",
+        link=uggly.Link(
+            key_stroke="p",
+            page_name="csv_previous")))
     return presp
 
 
@@ -123,43 +167,25 @@ def newBox(
     return divBox
 
 
-def genResponse(request: uggly.PageRequest) -> uggly.PageResponse:
-        #width = request.client_width
-        #height = request.client_height
+def genResponse(request: uggly.PageRequest, data: TableData) -> uggly.PageResponse:
         presp = uggly.PageResponse()
         divName = "nice"
         logging.info("before newbox")
-        if request.name == "csv":
-            return genTable(request)
+        if "csv" in request.name:
+            return genTableView(request, data)
         presp.div_boxes.boxes.append(newBox(divName, border_char="-", ffg="white", fbg="red"))
         presp.div_boxes.boxes.append(newBox("two", start_x=30,start_y=15, width=20, border_w=2))
-        #divBox = uggly.DivBox(
-        #    name=divName,
-        #    width=int(10),
-        #    height=int(10),
-        #    start_x=int(5),
-        #    start_y=int(5),
-        #    #fill_st=style("white","gray"),
-        #    #border=True,
-        #    #border_st=style("blue","black"),
-        #    #border_char="x",
-        #    fill_char=ord("x")
-        #)
-        #logging.info("after newbox")
         return presp
-        #return "hi"
-
 
 class PageServicer(uggly_pb2_grpc.PageServicer):
     """Provides methods that implement functionality of Page server."""
 
-    #def __init__(self):
-        #self.db = uggly_resources.read_uggly_database()
+    def __init__(self):
+        self.data_astro = TableData("data.csv")
 
     def GetPage(self, request: uggly.PageRequest, context) -> uggly.PageResponse:
-    #def GetPage(self, request, context):
         logging.info(request)
-        return genResponse(request)
+        return genResponse(request, self.data_astro)
 
 class FeedServicer(uggly_pb2_grpc.FeedServicer):
     """Provides methods that implement functionality of Feed server."""
