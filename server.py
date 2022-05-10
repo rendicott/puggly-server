@@ -23,8 +23,9 @@ class TableData():
             csv_reader = csv.reader(csv_file, delimiter=',')
             # first go through and identify lengths for all cells
             for i, row in enumerate(csv_reader):
-                self.Data.append(row)
-                for i, col in enumerate(row):
+                clean_row = [col.replace("  ", "") for col in row ]
+                self.Data.append(clean_row)
+                for i, col in enumerate(clean_row):
                     if self.Col_widths.get(i) is None:
                         self.Col_widths[i] = set()
                     self.Col_widths[i].add(len(col))
@@ -33,62 +34,137 @@ class TableData():
             for col, lengths in self.Col_widths.items():
                 self.Col_widths[col] = max(lengths)
 
+# genTableView determin
 def genTableView(preq: uggly.PageRequest, td: TableData) -> uggly.PageResponse:
+    page_name = preq.name.split("_")[0]
     # build our view frame based on page request name and
     # cookies set from any previous views
-    start = 0
-    end = preq.client_height - 4
-    start_next = 0
-    start_previous = 0
-    end_next = 0
-    end_previous = 0
+    hasHeader = True
+    defaultStart = 0
+    if hasHeader:
+        defaultStart = 1
+    buffer = 4
+    display_height = preq.client_height - buffer
+    display_rows = display_height
+    last_viewed = 0
+    start = defaultStart
+    end = display_rows+1
+    # determine what the last viewed record was
     for cookie in preq.send_cookies:
-        if cookie.key=="start_previous":
-            start_previous = int(cookie.value)
-        if cookie.key=="start_next":
-            start_next = int(cookie.value)
-        if cookie.key=="end_next":
-            end_next = int(cookie.value)
-        if cookie.key=="end_previous":
-            end_previous = int(cookie.value)
-    if "next" in preq.name:
-        start = start_next
-        end = end_next
-    if "previous" in preq.name:
-        start = start_previous
-        end = end_previous
-    if start < 0:
-        start = 0
-        end = preq.client_height - 4
-    if end > len(td.Data):
+        if cookie.key == "last_viewed":
+            last_viewed = int(cookie.value)
+    # find out if the client is trying to go backwards or forwards
+    # based on the link they clicked
+    if preq.name == "%s_n" % page_name:
+        start = last_viewed
+        end = last_viewed + display_rows
+    elif preq.name == "%s_p" % page_name:
+        start = last_viewed - 2*display_rows
+        end = start + display_rows
+    elif preq.name == "%s_end" % page_name:
         end = len(td.Data)
-        start = end - preq.client_height -4
-
+        start = end - display_rows
+    # check ranges for the extremes to make sure 
+    # we didn't exceed the start or end of the data
+    if start < defaultStart:
+        start = defaultStart
+        end = display_rows
+    if end > len(td.Data):
+        start = len(td.Data) - display_rows
+        end = len(td.Data)
     # now populate our view with data
     presp = uggly.PageResponse()
     presp = genTableRow(presp, td.Col_widths, True, 0, *td.Data[0])
     displayRow = 1
-    for i in range(start+1,end):
+    logging.info("last_viewed=%d, display_rows=%d, start=%d, end=%d, client_height=%d" % (last_viewed, display_rows, start,end, preq.client_height))
+    for i in range(start,end):
         row = td.Data[i]
         presp = genTableRow(presp, td.Col_widths, False, displayRow, *row)
         displayRow+=1
-    presp.set_cookies.append(uggly.Cookie(key="start_previous",value=str(start-displayRow)))
-    presp.set_cookies.append(uggly.Cookie(key="end_previous",value=str(start)))
-    presp.set_cookies.append(uggly.Cookie(key="start_next",value=str(end)))
-    presp.set_cookies.append(uggly.Cookie(key="end_next",value=str(end+preq.client_height-4)))
+    # add a cookie that lets the server know the last record we saw
+    # so it can calculate what we should see on a next/previous page
+    last_viewed = start + displayRow - 2
+    logging.info("last_viewed=%d, display_rows=%d, start=%d, end=%d, client_height=%d" % (last_viewed, display_rows, start,end, preq.client_height))
+    presp.set_cookies.append(uggly.Cookie(key="last_viewed",value=str(last_viewed)))
+    # add keystroke links to the page response for 'next' and 'previous'
     presp.key_strokes.append(uggly.KeyStroke(
         key_stroke="n",
         link=uggly.Link(
             key_stroke="n",
-            page_name="csv_next")))
+            page_name="%s_n" % page_name)))
     presp.key_strokes.append(uggly.KeyStroke(
         key_stroke="p",
         link=uggly.Link(
             key_stroke="p",
-            page_name="csv_previous")))
+            page_name="%s_p" % page_name)))
+    # add keystroke links to the page response for 'start' and 'end'
+    presp.key_strokes.append(uggly.KeyStroke(
+        key_stroke="s",
+        link=uggly.Link(
+            key_stroke="s",
+            page_name=page_name)))
+    presp.key_strokes.append(uggly.KeyStroke(
+        key_stroke="e",
+        link=uggly.Link(
+            key_stroke="e",
+            page_name="%s_end" % page_name)))
+    string_width = preq.client_width - 4
+    reserved = int(string_width / 3)
+    # set up a "you are here" string filling the available width divided by 3
+    rmsg = "(n) Next Page"
+    cmsg = "Displaying Records %d-%d (Total: %d)" % (start, last_viewed, len(td.Data))
+    lmsg = ("(p) Previous Page")
+    footer_msg = "{lmsg:<{reserved}}{cmsg:^{reserved}}{rmsg:>{reserved}}".format(lmsg=lmsg, cmsg=cmsg, rmsg=rmsg, reserved=reserved)
+    # build footer and add text
+    divNameFooter = "footer"
+    footerBox = newBox(
+        name=divNameFooter,
+        width=string_width + 2,
+        height=1,
+        start_y=preq.client_height - 2,
+        start_x=1,
+        ffg="white",
+        fbg="black",
+        fill_char="",
+        border=False,
+    )    
+    presp.div_boxes.boxes.append(footerBox)
+    tb_footer = uggly.TextBlob(
+            content=footer_msg,
+            wrap=False,
+            style=style("white","black"),
+        )
+    tb_footer.div_names.append(divNameFooter)
+    presp.elements.text_blobs.append(tb_footer)
+    # set up a header message 
+    tmsg = "(s) Go to Start        (e) Go to End"
+    header_msg = "{tmsg:^{string_width}}".format(tmsg=tmsg, string_width=string_width)
+    # build footer and add text
+    divNameHeader = "header"
+    headerBox = newBox(
+        name=divNameHeader,
+        width=string_width + 2,
+        height=1,
+        start_y=0,
+        start_x=1,
+        ffg="white",
+        fbg="black",
+        fill_char="",
+        border=False,
+    )    
+    presp.div_boxes.boxes.append(headerBox)
+    tb_header = uggly.TextBlob(
+            content=header_msg,
+            wrap=False,
+            style=style("white","black"),
+        )
+    tb_header.div_names.append(divNameHeader)
+    presp.elements.text_blobs.append(tb_header)
     return presp
 
-
+# genTableRow handles the building of a single table row
+# which is comprised of a divBox per cell of the table
+# with alternating colors
 def genTableRow(presp: uggly.PageResponse, col_widths, header=False, rownum: int=0, *args) -> uggly.PageResponse:
     start_x = 5
     start_y = 1 + rownum
@@ -129,6 +205,7 @@ def genTableRow(presp: uggly.PageResponse, col_widths, header=False, rownum: int
 def style(fg,bg):
     return uggly.Style(fg=fg,bg=bg,attr="4")
 
+# define a function that helps in setting defaults for new DivBoxes
 def newBox(
         name,
         width=40,
@@ -169,23 +246,30 @@ def newBox(
 
 def genResponse(request: uggly.PageRequest, data: TableData) -> uggly.PageResponse:
         presp = uggly.PageResponse()
-        divName = "nice"
         logging.info("before newbox")
-        if "csv" in request.name:
+        if "house" or "astro" in request.name:
             return genTableView(request, data)
-        presp.div_boxes.boxes.append(newBox(divName, border_char="-", ffg="white", fbg="red"))
-        presp.div_boxes.boxes.append(newBox("two", start_x=30,start_y=15, width=20, border_w=2))
+        else: 
+            divName = "nice"
+            presp.div_boxes.boxes.append(newBox(divName, border_char="-", ffg="white", fbg="red"))
+            presp.div_boxes.boxes.append(newBox("two", start_x=30,start_y=15, width=20, border_w=2))
         return presp
 
 class PageServicer(uggly_pb2_grpc.PageServicer):
     """Provides methods that implement functionality of Page server."""
 
     def __init__(self):
-        self.data_astro = TableData("data.csv")
+        self.data_astro = TableData("astro.csv")
+        self.data_house= TableData("house.csv")
 
     def GetPage(self, request: uggly.PageRequest, context) -> uggly.PageResponse:
         logging.info(request)
-        return genResponse(request, self.data_astro)
+        if "astro" in request.name:
+            return genResponse(request, self.data_astro)
+        if "house" in request.name:
+            return genResponse(request, self.data_house)
+        else:
+            return genResponse(request, self.data_astro)
 
 class FeedServicer(uggly_pb2_grpc.FeedServicer):
     """Provides methods that implement functionality of Feed server."""
