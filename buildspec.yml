@@ -1,0 +1,12 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - docker build . -t puggly-server
+      - aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 514723210267.dkr.ecr.us-east-2.amazonaws.com
+      - docker tag puggly-server:latest 514723210267.dkr.ecr.us-east-2.amazonaws.com/puggly-server:latest
+      - docker push 514723210267.dkr.ecr.us-east-2.amazonaws.com/puggly-server:latest
+artifacts:
+  files:
+    - ./depl/*
