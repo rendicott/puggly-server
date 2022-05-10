@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM public.ecr.aws/lts/ubuntu:22.04
 RUN apt-get update
 RUN apt-get install python3 python3-pip git -y
 RUN pip install grpcio
