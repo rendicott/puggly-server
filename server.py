@@ -43,7 +43,7 @@ def genTableView(preq: uggly.PageRequest, td: TableData) -> uggly.PageResponse:
     defaultStart = 0
     if hasHeader:
         defaultStart = 1
-    buffer = 4
+    buffer = 6
     display_height = preq.client_height - buffer
     display_rows = display_height
     last_viewed = 0
@@ -121,7 +121,7 @@ def genTableView(preq: uggly.PageRequest, td: TableData) -> uggly.PageResponse:
         name=divNameFooter,
         width=string_width + 2,
         height=1,
-        start_y=preq.client_height - 2,
+        start_y=preq.client_height - 4,
         start_x=1,
         ffg="white",
         fbg="black",
