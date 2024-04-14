@@ -2,6 +2,7 @@
 
 from concurrent import futures
 import logging
+import argparse
 from operator import contains
 from textwrap import fill
 
@@ -282,12 +283,33 @@ class FeedServicer(uggly_pb2_grpc.FeedServicer):
 
 
 def serve():
+    parser = argparse.ArgumentParser()
+    
+    # Adding optional argument
+    parser.add_argument("-k", "--Key", help = "path to SSL key file")
+    parser.add_argument("-c", "--Cert", help = "path to SSL cert file")
+    parser.add_argument("-p", "--Port", help = "port to run on", default="4443")
+    
+    # Read arguments from command line
+    args = parser.parse_args()
+    
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     uggly_pb2_grpc.add_PageServicer_to_server(
         PageServicer(), server)
     uggly_pb2_grpc.add_FeedServicer_to_server(
         FeedServicer(), server)
-    server.add_insecure_port('[::]:50051')
+    bind_string = "[::]:%s" % args.Port
+    if args.Key:
+        with open('privkey.pem', 'rb') as f:
+            private_key = f.read()
+        with open('fullchain.pem', 'rb') as f:
+            certificate_chain = f.read()
+        server_credentials = grpc.ssl_server_credentials( ( (private_key, certificate_chain), ) )
+        print("attempting to listen on '%s' with SSL" % bind_string)
+        server.add_secure_port(bind_string, server_credentials)
+    else:
+        print("attempting to listen on '%s' (no ssl)" % bind_string)
+        server.add_insecure_port(bind_string)
     server.start()
     server.wait_for_termination()
 
