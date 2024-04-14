@@ -300,9 +300,9 @@ def serve():
         FeedServicer(), server)
     bind_string = "[::]:%s" % args.Port
     if args.Key:
-        with open('privkey.pem', 'rb') as f:
+        with open(args.Key, 'rb') as f:
             private_key = f.read()
-        with open('fullchain.pem', 'rb') as f:
+        with open(args.Cert, 'rb') as f:
             certificate_chain = f.read()
         server_credentials = grpc.ssl_server_credentials( ( (private_key, certificate_chain), ) )
         print("attempting to listen on '%s' with SSL" % bind_string)
